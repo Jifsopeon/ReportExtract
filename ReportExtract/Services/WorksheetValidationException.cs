@@ -33,7 +33,8 @@ public sealed class WorksheetValidationException : Exception
     {
         return column switch
         {
-            RequiredWorksheetColumn.PartNumber => "P+F part number",
+            RequiredWorksheetColumn.PartNumber => "CPN",
+            RequiredWorksheetColumn.Mpn1 => "MPN1",
             RequiredWorksheetColumn.Category => "Category",
             RequiredWorksheetColumn.Manufacturer => "Manufacturer",
             _ => column.ToString()

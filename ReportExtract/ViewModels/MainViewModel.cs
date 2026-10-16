@@ -60,12 +60,13 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public ObservableCollection<WorksheetInfo> Worksheets { get; } = new();
     public ObservableCollection<ConstrainedFilterViewModel> ConstrainedFilters { get; } = new()
     {
-        new(SessionFilterColumn.PartNumber, "P+F part number"),
+        new(SessionFilterColumn.PartNumber, "CPN"),
         new(SessionFilterColumn.Category, "Category"),
         new(SessionFilterColumn.Manufacturer, "Manufacturer")
     };
     public ObservableCollection<FilterValueOption> ManufacturerPreview { get; } = new();
     public ObservableCollection<string> PresetNames { get; } = new();
+    public IReadOnlyList<string> ShowMavlModes => FilterSelectionSnapshot.ShowMavlModes;
     public AsyncRelayCommand ImportWorkbookCommand => _importWorkbookCommand;
     public AsyncRelayCommand LoadDataCommand => _loadDataCommand;
     public AsyncRelayCommand ExportFilteredWorkbookCommand => _exportFilteredWorkbookCommand;
@@ -164,6 +165,26 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     public string StatusMessage { get => _statusMessage; private set => SetProperty(ref _statusMessage, value); }
     public string DataStateMessage { get => _dataStateMessage; private set => SetProperty(ref _dataStateMessage, value); }
     public string? PresetName { get => _presetName; set => SetProperty(ref _presetName, value); }
+    public string ShowMavl
+    {
+        get => _settings.LastUsedFilterSelections.NormalizedShowMavl;
+        set
+        {
+            var normalized = FilterSelectionSnapshot.ShowMavlModes.Contains(value, StringComparer.Ordinal)
+                ? value : FilterSelectionSnapshot.FilteredOnlyMavlMode;
+            if (_settings.LastUsedFilterSelections.ShowMavl == normalized) return;
+            _settings.LastUsedFilterSelections.ShowMavl = normalized;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(ShowMavlFilterSummary));
+            RefreshShowMavlRadioButtons();
+            SaveSettings();
+        }
+    }
+    public string ShowMavlFilterSummary => $"Show MAVL: {ShowMavl}";
+    public bool IsFilteredOnlyMavl { get => ShowMavl == FilterSelectionSnapshot.FilteredOnlyMavlMode; set { if (value) ShowMavl = FilterSelectionSnapshot.FilteredOnlyMavlMode; } }
+    public bool IsYesOnlyMavl { get => ShowMavl == FilterSelectionSnapshot.YesOnlyMavlMode; set { if (value) ShowMavl = FilterSelectionSnapshot.YesOnlyMavlMode; } }
+    public bool IsNoOnlyMavl { get => ShowMavl == FilterSelectionSnapshot.NoOnlyMavlMode; set { if (value) ShowMavl = FilterSelectionSnapshot.NoOnlyMavlMode; } }
+    public bool IsBothExpandedMavl { get => ShowMavl == FilterSelectionSnapshot.BothExpandedMavlMode; set { if (value) ShowMavl = FilterSelectionSnapshot.BothExpandedMavlMode; } }
     public bool HasUnavailableSelectedValues => _unavailableSelections.Count > 0;
     public IReadOnlyList<UnavailableFilterSelection> UnavailableSelections => _unavailableSelections;
     public string PartNumberFilterSummary => BuildFilterSummary(SessionFilterColumn.PartNumber);
@@ -235,7 +256,7 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         if (!CanExportFilteredWorkbook || _processingSession is null || _mavlResult is null) return;
         var unavailable = await _duckDbDataService.GetUnavailableSelectionsAsync(GetConstrainedFilterSnapshot());
         if (unavailable.Count > 0 && !_fileDialogService.ConfirmUnavailableSelections("Some selected values are unavailable and will match zero rows. Continue with export?")) return;
-        var rows = await GetMatchingExcelRowNumbersAsync();
+        var rows = MavlExportSelectionService.Create(_processingSession, _mavlResult, await GetMatchingExcelRowNumbersAsync(), ShowMavl);
         if (rows.Count == 0)
         {
             StatusMessage = "No matching rows.";
@@ -273,7 +294,8 @@ public sealed class MainViewModel : ObservableObject, IDisposable
     {
         PartNumbers = Filter(SessionFilterColumn.PartNumber).SelectedValues.ToList(),
         Categories = Filter(SessionFilterColumn.Category).SelectedValues.ToList(),
-        Manufacturers = Filter(SessionFilterColumn.Manufacturer).SelectedValues.ToList()
+        Manufacturers = Filter(SessionFilterColumn.Manufacturer).SelectedValues.ToList(),
+        ShowMavl = ShowMavl
     };
 
     public async Task<IReadOnlyList<int>> GetMatchingExcelRowNumbersAsync() => _processingSession is null ? Array.Empty<int>() : await _duckDbDataService.GetMatchingExcelRowNumbersAsync(GetConstrainedFilterSnapshot());
@@ -345,6 +367,11 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         Filter(SessionFilterColumn.PartNumber).SetSelections(snapshot.PartNumbers);
         Filter(SessionFilterColumn.Category).SetSelections(snapshot.Categories);
         Filter(SessionFilterColumn.Manufacturer).SetSelections(snapshot.Manufacturers);
+        _settings.LastUsedFilterSelections.ShowMavl = snapshot.NormalizedShowMavl;
+        OnPropertyChanged(nameof(ShowMavl));
+        OnPropertyChanged(nameof(ShowMavlFilterSummary));
+        RefreshShowMavlRadioButtons();
+        SaveSettings();
     }
 
     private void ConstrainedFilterPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -451,6 +478,15 @@ public sealed class MainViewModel : ObservableObject, IDisposable
         OnPropertyChanged(nameof(PartNumberFilterSummary));
         OnPropertyChanged(nameof(CategoryFilterSummary));
         OnPropertyChanged(nameof(ManufacturerFilterSummary));
+        OnPropertyChanged(nameof(ShowMavlFilterSummary));
+    }
+
+    private void RefreshShowMavlRadioButtons()
+    {
+        OnPropertyChanged(nameof(IsFilteredOnlyMavl));
+        OnPropertyChanged(nameof(IsYesOnlyMavl));
+        OnPropertyChanged(nameof(IsNoOnlyMavl));
+        OnPropertyChanged(nameof(IsBothExpandedMavl));
     }
 
     private void SaveSettings()

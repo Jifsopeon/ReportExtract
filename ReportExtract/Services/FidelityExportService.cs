@@ -11,12 +11,17 @@ public sealed class FidelityExportService
 
     public Task<FidelityExportResult> ExportAsync(WorksheetProcessingSession session, MavlResult mavl, IReadOnlyCollection<int> matchingRows, string destinationPath, CancellationToken cancellationToken = default, IProgress<ExportProgress>? progress = null)
     {
-        return Task.Run(() => Export(session, mavl, matchingRows, destinationPath, cancellationToken, progress), cancellationToken);
+        return ExportAsync(session, mavl, matchingRows.Select(row => new ExportRowSelection(row, false)).ToList(), destinationPath, cancellationToken, progress);
     }
 
-    private static FidelityExportResult Export(WorksheetProcessingSession session, MavlResult mavl, IReadOnlyCollection<int> matchingRows, string destinationPath, CancellationToken cancellationToken, IProgress<ExportProgress>? progress)
+    public Task<FidelityExportResult> ExportAsync(WorksheetProcessingSession session, MavlResult mavl, IReadOnlyCollection<ExportRowSelection> selections, string destinationPath, CancellationToken cancellationToken = default, IProgress<ExportProgress>? progress = null)
     {
-        if (matchingRows.Count == 0)
+        return Task.Run(() => Export(session, mavl, selections, destinationPath, cancellationToken, progress), cancellationToken);
+    }
+
+    private static FidelityExportResult Export(WorksheetProcessingSession session, MavlResult mavl, IReadOnlyCollection<ExportRowSelection> selections, string destinationPath, CancellationToken cancellationToken, IProgress<ExportProgress>? progress)
+    {
+        if (selections.Count == 0)
         {
             throw new DuckDbDataException("No matching rows.");
         }
@@ -33,12 +38,12 @@ public sealed class FidelityExportService
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            Report(progress, 0, "Preparing export...", 0, matchingRows.Count);
+            Report(progress, 0, "Preparing export...", 0, selections.Count);
             var openTimer = Stopwatch.StartNew();
             using var source = new XLWorkbook(fullSourcePath);
             var sourceSheet = source.Worksheet(session.WorksheetName);
             LogStage("open source workbook", openTimer, session.WorksheetName);
-            Report(progress, 5, "Opening workbook...", 0, matchingRows.Count);
+            Report(progress, 5, "Opening workbook...", 0, selections.Count);
 
             cancellationToken.ThrowIfCancellationRequested();
             var prepareTimer = Stopwatch.StartNew();
@@ -48,10 +53,11 @@ public sealed class FidelityExportService
                 .Select(column => column.ExcelColumnNumber)
                 .ToHashSet();
             var eligibleRowNumbers = session.EligibleRows.Select(row => row.ExcelRowNumber).ToHashSet();
-            var exportedRows = matchingRows
-                .Where(eligibleRowNumbers.Contains)
-                .Distinct()
-                .OrderBy(rowNumber => rowNumber)
+            var exportedRows = selections
+                .Where(selection => eligibleRowNumbers.Contains(selection.ExcelRowNumber))
+                .GroupBy(selection => selection.ExcelRowNumber)
+                .Select(group => new ExportRowSelection(group.Key, group.Any(selection => selection.IsDirectMatch)))
+                .OrderBy(selection => selection.ExcelRowNumber)
                 .ToList();
             if (exportedRows.Count == 0)
             {
@@ -147,7 +153,7 @@ public sealed class FidelityExportService
 
         if (!columns.Any(column => column.IsGeneratedMavl))
         {
-            throw new DuckDbDataException("The P+F part number column could not be mapped for MAVL export.");
+            throw new DuckDbDataException("The CPN column could not be mapped for MAVL export.");
         }
 
         return columns;
@@ -170,11 +176,15 @@ public sealed class FidelityExportService
 
             var sourceColumn = column.SourceColumnNumber!.Value;
             CopyCellValueAndStyle(sourceSheet.Cell(sourceHeaderRow, sourceColumn), outputSheet.Cell(1, column.OutputColumnNumber));
+            if (sourceColumn == sourcePartColumn)
+            {
+                outputSheet.Cell(1, column.OutputColumnNumber).SetValue("CPN");
+            }
             targetColumn.Width = sourceSheet.Column(sourceColumn).Width;
         }
     }
 
-    private static void CopyDataRows(IXLWorksheet sourceSheet, IXLWorksheet outputSheet, IReadOnlyList<int> exportedRows, IReadOnlyList<ExportColumn> columns, CancellationToken cancellationToken, IProgress<ExportProgress>? progress)
+    private static void CopyDataRows(IXLWorksheet sourceSheet, IXLWorksheet outputSheet, IReadOnlyList<ExportRowSelection> exportedRows, IReadOnlyList<ExportColumn> columns, CancellationToken cancellationToken, IProgress<ExportProgress>? progress)
     {
         for (var sourceRowIndex = 0; sourceRowIndex < exportedRows.Count; sourceRowIndex++)
         {
@@ -183,7 +193,7 @@ public sealed class FidelityExportService
                 cancellationToken.ThrowIfCancellationRequested();
             }
 
-            var sourceRowNumber = exportedRows[sourceRowIndex];
+            var sourceRowNumber = exportedRows[sourceRowIndex].ExcelRowNumber;
             var outputRowNumber = sourceRowIndex + 2;
             outputSheet.Row(outputRowNumber).Height = sourceSheet.Row(sourceRowNumber).Height;
             foreach (var column in columns.Where(column => !column.IsGeneratedMavl))
@@ -193,6 +203,11 @@ public sealed class FidelityExportService
                     outputSheet.Cell(outputRowNumber, column.OutputColumnNumber));
             }
 
+            if (exportedRows[sourceRowIndex].IsDirectMatch)
+            {
+                ApplyDirectMatchHighlight(outputSheet, outputRowNumber, columns.Count);
+            }
+
             if (sourceRowIndex % CancellationCheckInterval == 0 || sourceRowIndex == exportedRows.Count - 1)
             {
                 Report(progress, 20 + (sourceRowIndex + 1) * 55 / exportedRows.Count, "Copying matching rows...", sourceRowIndex + 1, exportedRows.Count);
@@ -200,7 +215,7 @@ public sealed class FidelityExportService
         }
     }
 
-    private static void WriteMavl(IXLWorksheet outputSheet, IReadOnlyList<int> exportedRows, MavlResult mavl, int mavlColumnNumber, int partOutputColumnNumber, CancellationToken cancellationToken, IProgress<ExportProgress>? progress)
+    private static void WriteMavl(IXLWorksheet outputSheet, IReadOnlyList<ExportRowSelection> exportedRows, MavlResult mavl, int mavlColumnNumber, int partOutputColumnNumber, CancellationToken cancellationToken, IProgress<ExportProgress>? progress)
     {
         for (var sourceRowIndex = 0; sourceRowIndex < exportedRows.Count; sourceRowIndex++)
         {
@@ -212,7 +227,11 @@ public sealed class FidelityExportService
             var outputRowNumber = sourceRowIndex + 2;
             var mavlCell = outputSheet.Cell(outputRowNumber, mavlColumnNumber);
             mavlCell.Style = outputSheet.Cell(outputRowNumber, partOutputColumnNumber).Style;
-            mavlCell.SetValue(mavl.GetForExcelRow(exportedRows[sourceRowIndex]) == MavlClassification.Yes ? "Yes" : "No");
+            mavlCell.SetValue(mavl.GetForExcelRow(exportedRows[sourceRowIndex].ExcelRowNumber) == MavlClassification.Yes ? "Yes" : "No");
+            if (exportedRows[sourceRowIndex].IsDirectMatch)
+            {
+                mavlCell.Style.Fill.BackgroundColor = XLColor.Yellow;
+            }
             if (sourceRowIndex % CancellationCheckInterval == 0 || sourceRowIndex == exportedRows.Count - 1)
             {
                 Report(progress, 75 + (sourceRowIndex + 1) * 10 / exportedRows.Count, "Writing MAVL...", sourceRowIndex + 1, exportedRows.Count);
@@ -229,6 +248,14 @@ public sealed class FidelityExportService
 
         target.SetValue(source.HasFormula ? source.CachedValue : source.Value);
         target.Style = source.Style;
+    }
+
+    private static void ApplyDirectMatchHighlight(IXLWorksheet worksheet, int rowNumber, int outputColumnCount)
+    {
+        for (var columnNumber = 1; columnNumber <= outputColumnCount; columnNumber++)
+        {
+            worksheet.Cell(rowNumber, columnNumber).Style.Fill.BackgroundColor = XLColor.Yellow;
+        }
     }
 
     private static void ApplyFreezePanes(IXLWorksheet sourceSheet, IXLWorksheet outputSheet, IReadOnlyList<ExportColumn> columns, int sourcePartColumn)

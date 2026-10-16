@@ -6,12 +6,13 @@ namespace ReportExtract.Services;
 
 public sealed class WorksheetProcessingSessionService
 {
-    private static readonly IReadOnlyDictionary<RequiredWorksheetColumn, string> RequiredHeaders =
-        new Dictionary<RequiredWorksheetColumn, string>
+    private static readonly IReadOnlyDictionary<RequiredWorksheetColumn, IReadOnlyList<string>> RequiredHeaders =
+        new Dictionary<RequiredWorksheetColumn, IReadOnlyList<string>>
         {
-            [RequiredWorksheetColumn.PartNumber] = "P+F part number",
-            [RequiredWorksheetColumn.Category] = "Category",
-            [RequiredWorksheetColumn.Manufacturer] = "Manufacturer"
+            [RequiredWorksheetColumn.PartNumber] = new[] { "CPN", "P+F part number" },
+            [RequiredWorksheetColumn.Category] = new[] { "Category" },
+            [RequiredWorksheetColumn.Manufacturer] = new[] { "Manufacturer" },
+            [RequiredWorksheetColumn.Mpn1] = new[] { "MPN1" }
         };
 
     public Task<WorksheetProcessingSession> CreateAsync(
@@ -77,7 +78,7 @@ public sealed class WorksheetProcessingSessionService
             var unavailableRequiredColumns = requiredColumns.Where(column => !effectiveColumnNumbers.Contains(column.ExcelColumnNumber)).ToList();
             if (unavailableRequiredColumns.Count > 0)
             {
-                throw new WorksheetValidationException($"Required column(s) excluded by the hidden-content policy: {string.Join(", ", unavailableRequiredColumns.Select(column => RequiredHeaders[column.LogicalColumn]))}.");
+                throw new WorksheetValidationException($"Required column(s) excluded by the hidden-content policy: {string.Join(", ", unavailableRequiredColumns.Select(column => DisplayName(column.LogicalColumn)))}.");
             }
 
             var rows = new List<WorksheetSessionRow>();
@@ -167,17 +168,17 @@ public sealed class WorksheetProcessingSessionService
         foreach (var requiredHeader in RequiredHeaders)
         {
             var matches = headerCells
-                .Where(header => string.Equals(header.NormalizedHeader, requiredHeader.Value, StringComparison.OrdinalIgnoreCase))
+                .Where(header => requiredHeader.Value.Any(alias => string.Equals(header.NormalizedHeader, alias, StringComparison.OrdinalIgnoreCase)))
                 .ToList();
             if (matches.Count == 0)
             {
-                throw new WorksheetValidationException($"Missing required column: {requiredHeader.Value}.");
+                throw new WorksheetValidationException($"Missing required column: {DisplayName(requiredHeader.Key)}.");
             }
 
             if (matches.Count > 1)
             {
                 var columns = string.Join(", ", matches.Select(match => XLHelper.GetColumnLetterFromNumber(match.ColumnNumber)));
-                throw new WorksheetValidationException($"Duplicate required column '{requiredHeader.Value}' found in worksheet columns {columns}.");
+                throw new WorksheetValidationException($"Duplicate logical {DisplayName(requiredHeader.Key)} column found in worksheet columns {columns}.");
             }
 
             var match = matches[0];
@@ -222,6 +223,13 @@ public sealed class WorksheetProcessingSessionService
     }
 
     private static string NormalizeHeader(string value) => value.Trim();
+
+    private static string DisplayName(RequiredWorksheetColumn column) => column switch
+    {
+        RequiredWorksheetColumn.PartNumber => "CPN",
+        RequiredWorksheetColumn.Mpn1 => "MPN1",
+        _ => RequiredHeaders[column].Single()
+    };
 
     private static string GetCellDisplayValue(IXLCell cell) => cell.GetFormattedString();
 }

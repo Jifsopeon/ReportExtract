@@ -259,7 +259,7 @@ public sealed class DuckDbDataService : IDisposable
         cancellationToken.ThrowIfCancellationRequested();
         using var command = _connection.CreateCommand();
         command.CommandText = $"SELECT COUNT(*) FROM {SourceTableName} WHERE {PartNumberComparisonColumnName} IS NULL OR {PartNumberComparisonColumnName} = '' OR {ManufacturerComparisonColumnName} IS NULL OR {ManufacturerComparisonColumnName} = '';";
-        if (Convert.ToInt64(command.ExecuteScalar()) != 0) throw new DuckDbDataException("The validated session contains a blank P+F part number or Manufacturer identity.");
+        if (Convert.ToInt64(command.ExecuteScalar()) != 0) throw new DuckDbDataException("The validated session contains a blank CPN or Manufacturer identity.");
         command.CommandText = $"""
             WITH part_mavl AS (
                 SELECT {PartNumberComparisonColumnName} AS part_identity,
