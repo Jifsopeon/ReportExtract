@@ -40,7 +40,8 @@ public sealed class FidelityExportService
             cancellationToken.ThrowIfCancellationRequested();
             Report(progress, 0, "Preparing export...", 0, selections.Count);
             var openTimer = Stopwatch.StartNew();
-            using var source = new XLWorkbook(fullSourcePath);
+            using var sourceStream = File.Open(fullSourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var source = new XLWorkbook(sourceStream);
             var sourceSheet = source.Worksheet(session.WorksheetName);
             var sourceHasAutoFilter = sourceSheet.AutoFilter.IsEnabled;
             LogStage("open source workbook", openTimer, session.WorksheetName);
@@ -125,6 +126,7 @@ public sealed class FidelityExportService
         }
         catch (Exception ex) when (ex is not DuckDbDataException and not OperationCanceledException)
         {
+            PerformanceLogger.Write($"Filtered workbook export failed message=\"{ex.Message}\"");
             throw new DuckDbDataException("The filtered workbook could not be exported.", ex);
         }
         finally
