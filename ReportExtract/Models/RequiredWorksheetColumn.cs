@@ -5,5 +5,5 @@ public enum RequiredWorksheetColumn
     PartNumber,
     Category,
     Manufacturer,
-    Mpn1
+    Mpn
 }

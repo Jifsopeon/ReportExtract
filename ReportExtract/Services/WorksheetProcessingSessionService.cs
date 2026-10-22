@@ -9,10 +9,10 @@ public sealed class WorksheetProcessingSessionService
     private static readonly IReadOnlyDictionary<RequiredWorksheetColumn, IReadOnlyList<string>> RequiredHeaders =
         new Dictionary<RequiredWorksheetColumn, IReadOnlyList<string>>
         {
-            [RequiredWorksheetColumn.PartNumber] = new[] { "CPN", "P+F part number" },
+            [RequiredWorksheetColumn.PartNumber] = new[] { "CPN" },
             [RequiredWorksheetColumn.Category] = new[] { "Category" },
             [RequiredWorksheetColumn.Manufacturer] = new[] { "Manufacturer" },
-            [RequiredWorksheetColumn.Mpn1] = new[] { "MPN1" }
+            [RequiredWorksheetColumn.Mpn] = new[] { "MPN" }
         };
 
     public Task<WorksheetProcessingSession> CreateAsync(
@@ -85,6 +85,7 @@ public sealed class WorksheetProcessingSessionService
             var partColumn = requiredColumns.Single(column => column.LogicalColumn == RequiredWorksheetColumn.PartNumber);
             var categoryColumn = requiredColumns.Single(column => column.LogicalColumn == RequiredWorksheetColumn.Category);
             var manufacturerColumn = requiredColumns.Single(column => column.LogicalColumn == RequiredWorksheetColumn.Manufacturer);
+            var mpnColumn = requiredColumns.Single(column => column.LogicalColumn == RequiredWorksheetColumn.Mpn);
             var lastRowNumber = range.LastRow().RowNumber();
 
             for (var rowNumber = headerRow.RowNumber() + 1; rowNumber <= lastRowNumber; rowNumber++)
@@ -103,6 +104,7 @@ public sealed class WorksheetProcessingSessionService
                 var partNumber = GetCellDisplayValue(worksheet.Cell(rowNumber, partColumn.ExcelColumnNumber));
                 var category = GetCellDisplayValue(worksheet.Cell(rowNumber, categoryColumn.ExcelColumnNumber));
                 var manufacturer = GetCellDisplayValue(worksheet.Cell(rowNumber, manufacturerColumn.ExcelColumnNumber));
+                var mpn = GetCellDisplayValue(worksheet.Cell(rowNumber, mpnColumn.ExcelColumnNumber));
                 rows.Add(new WorksheetSessionRow
                 {
                     ExcelRowNumber = rowNumber,
@@ -111,7 +113,8 @@ public sealed class WorksheetProcessingSessionService
                     CategoryRawValue = category,
                     CategoryComparisonValue = AnalyticalValueIdentity.Normalize(category),
                     ManufacturerRawValue = manufacturer,
-                    ManufacturerComparisonValue = AnalyticalValueIdentity.Normalize(manufacturer)
+                    ManufacturerComparisonValue = AnalyticalValueIdentity.Normalize(manufacturer),
+                    MpnRawValue = mpn
                 });
             }
 
@@ -198,7 +201,9 @@ public sealed class WorksheetProcessingSessionService
         using var measurement = PerformanceLogger.Measure("Required-cell blank validation", $"rows={rows.Count}");
         var issues = new List<WorksheetValidationIssue>();
         AddIssue(RequiredWorksheetColumn.PartNumber, rows.Where(row => string.IsNullOrWhiteSpace(row.PartNumberRawValue)).Select(row => row.ExcelRowNumber), issues);
+        AddIssue(RequiredWorksheetColumn.Category, rows.Where(row => string.IsNullOrWhiteSpace(row.CategoryRawValue)).Select(row => row.ExcelRowNumber), issues);
         AddIssue(RequiredWorksheetColumn.Manufacturer, rows.Where(row => string.IsNullOrWhiteSpace(row.ManufacturerRawValue)).Select(row => row.ExcelRowNumber), issues);
+        AddIssue(RequiredWorksheetColumn.Mpn, rows.Where(row => string.IsNullOrWhiteSpace(row.MpnRawValue)).Select(row => row.ExcelRowNumber), issues);
 
         if (issues.Count > 0)
         {
@@ -227,7 +232,7 @@ public sealed class WorksheetProcessingSessionService
     private static string DisplayName(RequiredWorksheetColumn column) => column switch
     {
         RequiredWorksheetColumn.PartNumber => "CPN",
-        RequiredWorksheetColumn.Mpn1 => "MPN1",
+        RequiredWorksheetColumn.Mpn => "MPN",
         _ => RequiredHeaders[column].Single()
     };
 

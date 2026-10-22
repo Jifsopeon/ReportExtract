@@ -8,7 +8,7 @@ public sealed class FilterValueOption
 
     public long Count { get; init; }
 
-    public bool IsBlank => Value is null || Value == FilterSelectionValues.BlankCategory;
+    public bool IsBlank => Value is null || Value.Length == 0;
 
     public string DisplayWithCount => $"{DisplayValue} ({Count})";
 }

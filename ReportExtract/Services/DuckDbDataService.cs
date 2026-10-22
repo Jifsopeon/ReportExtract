@@ -10,7 +10,6 @@ public sealed class DuckDbDataService : IDisposable
 {
     private const string SourceTableName = "source_rows";
     private const string PartNumberComparisonColumnName = "part_number_comparison_value";
-    private const string CategoryComparisonColumnName = "category_comparison_value";
     private const string ManufacturerComparisonColumnName = "manufacturer_comparison_value";
     private readonly string _databasePath;
     private DuckDBConnection? _connection;
@@ -38,11 +37,6 @@ public sealed class DuckDbDataService : IDisposable
     public Task<IReadOnlyList<FilterValueOption>> GetSessionFilterValuesAsync(SessionFilterColumn column, string? searchText, int limit = 500, CancellationToken cancellationToken = default)
     {
         return Task.Run(() => GetSessionFilterValues(column, searchText, limit, cancellationToken), cancellationToken);
-    }
-
-    public Task<IReadOnlyList<FilterValueOption>> GetManufacturerPreviewAsync(CancellationToken cancellationToken = default)
-    {
-        return Task.Run(() => GetSessionFilterValues(SessionFilterColumn.Manufacturer, null, int.MaxValue, cancellationToken), cancellationToken);
     }
 
     public Task<IReadOnlyList<int>> GetMatchingExcelRowNumbersAsync(FilterSelectionSnapshot selections, CancellationToken cancellationToken = default)
@@ -179,7 +173,7 @@ public sealed class DuckDbDataService : IDisposable
             results.Add(new FilterValueOption
             {
                 Value = value,
-                DisplayValue = value is null || value == FilterSelectionValues.BlankCategory ? "(Blank)" : value,
+                DisplayValue = value ?? string.Empty,
                 Count = Convert.ToInt64(reader.GetValue(1))
             });
         }
@@ -197,18 +191,11 @@ public sealed class DuckDbDataService : IDisposable
             var values = selections.ValuesFor(column);
             if (values.Count == 0) continue;
             var expression = GetSessionFilterExpression(column);
-            var nonBlankValues = column == SessionFilterColumn.Category
-                ? values.Where(value => value != FilterSelectionValues.BlankCategory).ToList()
-                : values.ToList();
             var columnConditions = new List<string>();
-            if (nonBlankValues.Count > 0)
+            if (values.Count > 0)
             {
-                columnConditions.Add($"{expression} IN ({string.Join(", ", nonBlankValues.Select(_ => "?"))})");
-                foreach (var value in nonBlankValues) AddParameter(command, value);
-            }
-            if (column == SessionFilterColumn.Category && values.Contains(FilterSelectionValues.BlankCategory, StringComparer.Ordinal))
-            {
-                columnConditions.Add($"({expression} IS NULL OR {expression} = '')");
+                columnConditions.Add($"{expression} IN ({string.Join(", ", values.Select(_ => "?"))})");
+                foreach (var value in values) AddParameter(command, value);
             }
             conditions.Add(columnConditions.Count == 1 ? columnConditions[0] : $"({string.Join(" OR ", columnConditions)})");
         }
@@ -245,8 +232,6 @@ public sealed class DuckDbDataService : IDisposable
         if (_currentDataset?.ProcessingSession is null) throw new DuckDbDataException("Load a validated worksheet before filtering.");
         return column switch
         {
-            SessionFilterColumn.PartNumber => PartNumberComparisonColumnName,
-            SessionFilterColumn.Category => CategoryComparisonColumnName,
             SessionFilterColumn.Manufacturer => ManufacturerComparisonColumnName,
             _ => throw new DuckDbDataException("The selected filter column is not supported.")
         };
@@ -279,13 +264,7 @@ public sealed class DuckDbDataService : IDisposable
         return new MavlResult { ByExcelRowNumber = values };
     }
 
-    private string GetSessionFilterValueExpression(SessionFilterColumn column)
-    {
-        var expression = GetSessionFilterExpression(column);
-        return column == SessionFilterColumn.Category
-            ? $"COALESCE(NULLIF({expression}, ''), '{FilterSelectionValues.BlankCategory}')"
-            : expression;
-    }
+    private string GetSessionFilterValueExpression(SessionFilterColumn column) => GetSessionFilterExpression(column);
 
     private void EnsureOpenConnection(bool resetDatabase)
     {
@@ -324,7 +303,6 @@ public sealed class DuckDbDataService : IDisposable
                 _excel_row_number INTEGER NOT NULL,
                 {columnSql},
                 {PartNumberComparisonColumnName} VARCHAR,
-                {CategoryComparisonColumnName} VARCHAR,
                 {ManufacturerComparisonColumnName} VARCHAR
             );
             """;
@@ -359,7 +337,6 @@ public sealed class DuckDbDataService : IDisposable
                 }
 
                 row.AppendValue(sessionRow.PartNumberComparisonValue);
-                row.AppendValue(sessionRow.CategoryComparisonValue);
                 row.AppendValue(sessionRow.ManufacturerComparisonValue);
             });
         }

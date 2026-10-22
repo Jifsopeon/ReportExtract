@@ -12,6 +12,8 @@ public sealed class WorksheetSessionRow
 
     public string CategoryComparisonValue { get; init; } = string.Empty;
 
+    public string MpnRawValue { get; init; } = string.Empty;
+
     public string ManufacturerRawValue { get; init; } = string.Empty;
 
     // Every core analytical identity uses leading/trailing trim only.

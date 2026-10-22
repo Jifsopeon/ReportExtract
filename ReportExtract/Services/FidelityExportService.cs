@@ -42,6 +42,7 @@ public sealed class FidelityExportService
             var openTimer = Stopwatch.StartNew();
             using var source = new XLWorkbook(fullSourcePath);
             var sourceSheet = source.Worksheet(session.WorksheetName);
+            var sourceHasAutoFilter = sourceSheet.AutoFilter.IsEnabled;
             LogStage("open source workbook", openTimer, session.WorksheetName);
             Report(progress, 5, "Opening workbook...", 0, selections.Count);
 
@@ -74,8 +75,8 @@ public sealed class FidelityExportService
             cancellationToken.ThrowIfCancellationRequested();
             var createTimer = Stopwatch.StartNew();
             using var output = new XLWorkbook();
-            var outputSheet = output.Worksheets.Add(session.WorksheetName);
-            LogStage("create output worksheet", createTimer, session.WorksheetName);
+            var outputSheet = output.Worksheets.Add("Output File");
+            LogStage("create output worksheet", createTimer, "Output File");
 
             cancellationToken.ThrowIfCancellationRequested();
             var layoutTimer = Stopwatch.StartNew();
@@ -92,6 +93,8 @@ public sealed class FidelityExportService
             var mavlTimer = Stopwatch.StartNew();
             WriteMavl(outputSheet, exportedRows, mavl, mavlColumnNumber, columns.Single(column => column.SourceColumnNumber == sourcePartColumn).OutputColumnNumber, cancellationToken, progress);
             LogStage("write MAVL", mavlTimer, $"rows={exportedRows.Count}");
+
+            ApplyAutoFilter(sourceHasAutoFilter, outputSheet, exportedRows.Count, columns.Count);
 
             cancellationToken.ThrowIfCancellationRequested();
             var freezeTimer = Stopwatch.StartNew();
@@ -272,6 +275,14 @@ public sealed class FidelityExportService
         if (frozenRows > 0 || frozenColumns > 0)
         {
             outputSheet.SheetView.Freeze(frozenRows, frozenColumns);
+        }
+    }
+
+    private static void ApplyAutoFilter(bool sourceHasAutoFilter, IXLWorksheet outputSheet, int exportedRowCount, int outputColumnCount)
+    {
+        if (sourceHasAutoFilter)
+        {
+            outputSheet.Range(1, 1, exportedRowCount + 1, outputColumnCount).SetAutoFilter();
         }
     }
 

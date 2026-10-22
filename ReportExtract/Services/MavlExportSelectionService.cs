@@ -7,12 +7,8 @@ public static class MavlExportSelectionService
     public static IReadOnlyList<ExportRowSelection> Create(
         WorksheetProcessingSession session,
         MavlResult mavl,
-        IReadOnlyCollection<int> directMatchRowNumbers,
-        string? showMavl)
+        IReadOnlyCollection<int> directMatchRowNumbers)
     {
-        var mode = FilterSelectionSnapshot.ShowMavlModes.Contains(showMavl, StringComparer.Ordinal)
-            ? showMavl!
-            : FilterSelectionSnapshot.FilteredOnlyMavlMode;
         var directRows = new HashSet<int>(directMatchRowNumbers);
         var qualifiedPartNumbers = session.EligibleRows
             .Where(row => directRows.Contains(row.ExcelRowNumber) && mavl.GetForExcelRow(row.ExcelRowNumber) == MavlClassification.Yes)
@@ -23,17 +19,7 @@ public static class MavlExportSelectionService
         foreach (var row in session.EligibleRows)
         {
             var isDirect = directRows.Contains(row.ExcelRowNumber);
-            var classification = mavl.GetForExcelRow(row.ExcelRowNumber);
-            var include = mode switch
-            {
-                FilterSelectionSnapshot.FilteredOnlyMavlMode => isDirect,
-                FilterSelectionSnapshot.NoOnlyMavlMode => isDirect && classification == MavlClassification.No,
-                FilterSelectionSnapshot.YesOnlyMavlMode => classification == MavlClassification.Yes && qualifiedPartNumbers.Contains(row.PartNumberComparisonValue),
-                FilterSelectionSnapshot.BothExpandedMavlMode =>
-                    (isDirect && classification == MavlClassification.No) ||
-                    (classification == MavlClassification.Yes && qualifiedPartNumbers.Contains(row.PartNumberComparisonValue)),
-                _ => isDirect
-            };
+            var include = isDirect || qualifiedPartNumbers.Contains(row.PartNumberComparisonValue);
 
             if (include)
             {
@@ -41,10 +27,9 @@ public static class MavlExportSelectionService
             }
         }
 
-        var useHighlight = mode is FilterSelectionSnapshot.YesOnlyMavlMode or FilterSelectionSnapshot.BothExpandedMavlMode;
         return session.EligibleRows
             .Where(row => selected.ContainsKey(row.ExcelRowNumber))
-            .Select(row => new ExportRowSelection(row.ExcelRowNumber, useHighlight && selected[row.ExcelRowNumber]))
+            .Select(row => new ExportRowSelection(row.ExcelRowNumber, selected[row.ExcelRowNumber]))
             .ToList();
     }
 }
